@@ -1,0 +1,107 @@
+name: Download arquivos MD
+
+on:
+  workflow_dispatch:
+  repository_dispatch:
+    types:
+      - jira-card-moved
+
+jobs:
+  download-files:
+    runs-on: ubuntu-latest
+
+    steps:
+      # ============================
+      # ANTES DO DOWNLOAD
+      # ============================
+      - name: Pré-download - registrar contexto da execução
+        env:
+          JIRA_CARD: ${{ github.event.client_payload.jira_card || 'execucao-manual' }}
+          JIRA_USER: ${{ github.event.client_payload.jira_user || github.actor }}
+        run: |
+          echo "====== PRÉ-DOWNLOAD ======" | tee "$RUNNER_TEMP/pre-download.log"
+          echo "Evento que disparou: $GITHUB_EVENT_NAME" | tee -a "$RUNNER_TEMP/pre-download.log"
+          echo "Repositório: $GITHUB_REPOSITORY" | tee -a "$RUNNER_TEMP/pre-download.log"
+          echo "Branch/Ref: $GITHUB_REF" | tee -a "$RUNNER_TEMP/pre-download.log"
+          echo "Executado por: $GITHUB_ACTOR" | tee -a "$RUNNER_TEMP/pre-download.log"
+          echo "Card Jira: $JIRA_CARD" | tee -a "$RUNNER_TEMP/pre-download.log"
+          echo "Usuário Jira: $JIRA_USER" | tee -a "$RUNNER_TEMP/pre-download.log"
+          echo "Data UTC: $(date -u '+%Y-%m-%d %H:%M:%S')" | tee -a "$RUNNER_TEMP/pre-download.log"
+
+      - name: Pré-download - validar evento permitido
+        run: |
+          if [[ "$GITHUB_EVENT_NAME" != "workflow_dispatch" && "$GITHUB_EVENT_NAME" != "repository_dispatch" ]]; then
+            echo "Evento não permitido: $GITHUB_EVENT_NAME"
+            exit 1
+          fi
+
+          echo "Evento permitido: $GITHUB_EVENT_NAME"
+
+      # ============================
+      # DOWNLOAD DO REPOSITÓRIO
+      # ============================
+      - name: Baixar arquivos do repositório
+        uses: actions/checkout@v4
+
+      - name: Listar arquivos baixados
+        run: 
+        
+      # ============================
+      # DEPOIS DO DOWNLOAD
+      # ============================
+      - name: Pós-download - validar arquivos MD baixados
+        run: |
+          mkdir -p relatorios
+
+          cp "$RUNNER_TEMP/pre-download.log" relatorios/pre-download.log
+
+          echo "====== PÓS-DOWNLOAD ======" | tee relatorios/pos-download.log
+          echo "Procurando arquivos .md no repositório..." | tee -a relatorios/pos-download.log
+
+          find . -maxdepth 2 -type f -name "*.md" | sort > relatorios/arquivos-md.txt
+
+          TOTAL_MD=$(wc -l < relatorios/arquivos-md.txt)
+
+          echo "Total de arquivos .md encontrados: $TOTAL_MD" | tee -a relatorios/pos-download.log
+
+          if [ "$TOTAL_MD" -eq 0 ]; then
+            echo "Nenhum arquivo .md foi encontrado."
+            exit 1
+          fi
+
+          echo "Arquivos encontrados:"
+          cat relatorios/arquivos-md.txt
+
+      - name: Pós-download - gerar hash dos arquivos MD
+        run: |
+          echo "Gerando hash SHA256 dos arquivos .md..."
+
+          while read arquivo; do
+            sha256sum "$arquivo"
+          done < relatorios/arquivos-md.txt | tee relatorios/hashes-md.txt
+
+      - name: Pós-download - validar arquivos esperados
+        run: |
+          if [ ! -f "receita_cuscuz.md" ]; then
+            echo "Arquivo receita_cuscuz.md não encontrado."
+            exit 1
+          fi
+
+          if [ ! -f "titulos_corinthians.md" ]; then
+            echo "Arquivo titulos_corinthians.md não encontrado."
+            exit 1
+          fi
+
+          echo "Arquivos esperados encontrados com sucesso."
+
+      - name: Mostrar receita
+        run: cat receita_cuscuz.md
+
+      - name: Mostrar títulos
+        run: cat titulos_corinthians.md
+
+      - name: Pós-download - salvar relatório da execução
+        uses: actions/upload-artifact@v4
+        with:
+          name: relatorio-download-md
+          path: relatorios/
