@@ -1,13 +1,7 @@
-name: Processar PRD Standard
+name: Processar todos os PRDs
 
 on:
   workflow_dispatch:
-    inputs:
-      arquivo_prd_origem:
-        description: "Nome do arquivo PRD no repositório de armazenamento"
-        required: false
-        default: "receita_cuscuz.md"
-
   repository_dispatch:
     types:
       - jira-card-moved
@@ -23,10 +17,9 @@ env:
   REPO_ARMAZENAMENTO: CintiaMiranda2006/Workflow-Armazenamento
   BRANCH_ARMAZENAMENTO: main
   PRD_STANDARD_DESTINO: markdown_vazio.md
-  DEFAULT_PRD_ORIGEM: receita_cuscuz.md
 
 jobs:
-  processar-prd:
+  processar-todos-prds:
     runs-on: ubuntu-latest
 
     steps:
@@ -35,65 +28,83 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Definir arquivo PRD de origem
-        id: definir-prd
-        env:
-          INPUT_PRD_FILE: ${{ github.event.inputs.arquivo_prd_origem }}
-          PAYLOAD_PRD_FILE: ${{ github.event.client_payload.prd_file }}
-        run: |
-          PRD_ORIGEM="${INPUT_PRD_FILE:-${PAYLOAD_PRD_FILE:-$DEFAULT_PRD_ORIGEM}}"
+      - name: Baixar Repositório 1 - Armazenamento
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ env.REPO_ARMAZENAMENTO }}
+          ref: ${{ env.BRANCH_ARMAZENAMENTO }}
+          path: repo-armazenamento
+          persist-credentials: false
 
-          echo "PRD de origem definido: $PRD_ORIGEM"
-          echo "prd_origem=$PRD_ORIGEM" >> "$GITHUB_OUTPUT"
-
-      - name: Validar existência do PRD Standard no Repositório 2
+      - name: Validar PRD Standard no Repositório 2
         run: |
           if [ ! -f "$PRD_STANDARD_DESTINO" ]; then
             echo "Erro: o arquivo $PRD_STANDARD_DESTINO não existe no Repositório 2."
             exit 1
           fi
 
-          echo "Arquivo PRD Standard encontrado: $PRD_STANDARD_DESTINO"
+          echo "PRD Standard encontrado: $PRD_STANDARD_DESTINO"
 
-      - name: Buscar PRD do Repositório 1 e sobrescrever PRD Standard
-        env:
-          PRD_ORIGEM: ${{ steps.definir-prd.outputs.prd_origem }}
-        run: |
-          RAW_URL="https://raw.githubusercontent.com/${REPO_ARMAZENAMENTO}/${BRANCH_ARMAZENAMENTO}/${PRD_ORIGEM}"
-
-          echo "Buscando PRD no Repositório 1..."
-          echo "Arquivo origem: $PRD_ORIGEM"
-          echo "Arquivo destino: $PRD_STANDARD_DESTINO"
-
-          curl -L --fail "$RAW_URL" -o "$PRD_STANDARD_DESTINO"
-
-          if [ ! -s "$PRD_STANDARD_DESTINO" ]; then
-            echo "Erro: o PRD Standard ficou vazio após o download."
-            exit 1
-          fi
-
-          echo "PRD Standard sobrescrito com sucesso."
-          echo "Prévia do conteúdo:"
-          head -n 20 "$PRD_STANDARD_DESTINO"
-
-      - name: Processamento principal do PRD
+      - name: Buscar todos os PRDs do Repositório 1 e processar um por um
         run: |
           mkdir -p relatorios
 
-          echo "Iniciando processamento do PRD..."
-          echo "Arquivo processado: $PRD_STANDARD_DESTINO" | tee relatorios/processamento-prd.log
-          echo "Quantidade de linhas: $(wc -l < "$PRD_STANDARD_DESTINO")" | tee -a relatorios/processamento-prd.log
-          echo "Quantidade de caracteres: $(wc -m < "$PRD_STANDARD_DESTINO")" | tee -a relatorios/processamento-prd.log
-          echo "Hash SHA256:" | tee -a relatorios/processamento-prd.log
-          sha256sum "$PRD_STANDARD_DESTINO" | tee -a relatorios/processamento-prd.log
+          echo "Buscando todos os arquivos .md do Repositório 1, ignorando README.md..."
 
-          echo "" >> relatorios/processamento-prd.log
-          echo "Conteúdo processado:" >> relatorios/processamento-prd.log
-          cat "$PRD_STANDARD_DESTINO" >> relatorios/processamento-prd.log
+          mapfile -t PRDS < <(find repo-armazenamento -type f -name "*.md" ! -iname "README.md" | sort)
 
-          echo "Processamento finalizado com sucesso."
+          if [ ${#PRDS[@]} -eq 0 ]; then
+            echo "Erro: nenhum PRD .md encontrado no Repositório 1."
+            exit 1
+          fi
 
-      - name: Limpar PRD Standard após processamento
+          echo "Total de PRDs encontrados: ${#PRDS[@]}"
+          echo ""
+
+          for PRD in "${PRDS[@]}"; do
+            NOME_PRD=$(basename "$PRD")
+            NOME_RELATORIO="${NOME_PRD%.md}"
+
+            echo "=========================================="
+            echo "Processando PRD: $NOME_PRD"
+            echo "Arquivo origem: $PRD"
+            echo "Arquivo destino: $PRD_STANDARD_DESTINO"
+            echo "=========================================="
+
+            cp "$PRD" "$PRD_STANDARD_DESTINO"
+
+            if [ ! -s "$PRD_STANDARD_DESTINO" ]; then
+              echo "Erro: o PRD Standard ficou vazio após copiar $NOME_PRD."
+              exit 1
+            fi
+
+            echo "PRD copiado para o PRD Standard com sucesso."
+            echo "Prévia do conteúdo:"
+            head -n 10 "$PRD_STANDARD_DESTINO"
+
+            echo ""
+            echo "Executando processamento principal..."
+
+            {
+              echo "PRD processado: $NOME_PRD"
+              echo "Arquivo origem: $PRD"
+              echo "Arquivo destino temporário: $PRD_STANDARD_DESTINO"
+              echo "Quantidade de linhas: $(wc -l < "$PRD_STANDARD_DESTINO")"
+              echo "Quantidade de caracteres: $(wc -m < "$PRD_STANDARD_DESTINO")"
+              echo "Hash SHA256:"
+              sha256sum "$PRD_STANDARD_DESTINO"
+              echo ""
+              echo "Conteúdo processado:"
+              cat "$PRD_STANDARD_DESTINO"
+            } > "relatorios/${NOME_RELATORIO}-processamento.log"
+
+            echo "Processamento finalizado para: $NOME_PRD"
+            echo ""
+          done
+
+          echo "Todos os PRDs foram processados."
+
+      - name: Limpar PRD Standard após todos os processamentos
         if: always()
         run: |
           echo "Limpando o conteúdo do PRD Standard..."
@@ -115,9 +126,9 @@ jobs:
             git push
           fi
 
-      - name: Publicar relatório do processamento
+      - name: Publicar relatórios dos PRDs processados
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: relatorio-processamento-prd
+          name: relatorios-processamento-prds
           path: relatorios/
