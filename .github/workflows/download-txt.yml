@@ -1,107 +1,123 @@
-name: Download arquivos MD
+name: Processar PRD Standard
 
 on:
   workflow_dispatch:
+    inputs:
+      arquivo_prd_origem:
+        description: "Nome do arquivo PRD no repositório de armazenamento"
+        required: false
+        default: "receita_cuscuz.md"
+
   repository_dispatch:
     types:
       - jira-card-moved
 
+permissions:
+  contents: write
+
+concurrency:
+  group: processamento-prd-standard
+  cancel-in-progress: false
+
+env:
+  REPO_ARMAZENAMENTO: CintiaMiranda2006/Workflow-Armazenamento
+  BRANCH_ARMAZENAMENTO: main
+  PRD_STANDARD_DESTINO: markdown_vazio.md
+  DEFAULT_PRD_ORIGEM: receita_cuscuz.md
+
 jobs:
-  download-files:
+  processar-prd:
     runs-on: ubuntu-latest
 
     steps:
-      # ============================
-      # ANTES DO DOWNLOAD
-      # ============================
-      - name: Pré-download - registrar contexto da execução
-        env:
-          JIRA_CARD: ${{ github.event.client_payload.jira_card || 'execucao-manual' }}
-          JIRA_USER: ${{ github.event.client_payload.jira_user || github.actor }}
-        run: |
-          echo "====== PRÉ-DOWNLOAD ======" | tee "$RUNNER_TEMP/pre-download.log"
-          echo "Evento que disparou: $GITHUB_EVENT_NAME" | tee -a "$RUNNER_TEMP/pre-download.log"
-          echo "Repositório: $GITHUB_REPOSITORY" | tee -a "$RUNNER_TEMP/pre-download.log"
-          echo "Branch/Ref: $GITHUB_REF" | tee -a "$RUNNER_TEMP/pre-download.log"
-          echo "Executado por: $GITHUB_ACTOR" | tee -a "$RUNNER_TEMP/pre-download.log"
-          echo "Card Jira: $JIRA_CARD" | tee -a "$RUNNER_TEMP/pre-download.log"
-          echo "Usuário Jira: $JIRA_USER" | tee -a "$RUNNER_TEMP/pre-download.log"
-          echo "Data UTC: $(date -u '+%Y-%m-%d %H:%M:%S')" | tee -a "$RUNNER_TEMP/pre-download.log"
+      - name: Baixar Repositório 2 - Processamento
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
-      - name: Pré-download - validar evento permitido
+      - name: Definir arquivo PRD de origem
+        id: definir-prd
+        env:
+          INPUT_PRD_FILE: ${{ github.event.inputs.arquivo_prd_origem }}
+          PAYLOAD_PRD_FILE: ${{ github.event.client_payload.prd_file }}
         run: |
-          if [[ "$GITHUB_EVENT_NAME" != "workflow_dispatch" && "$GITHUB_EVENT_NAME" != "repository_dispatch" ]]; then
-            echo "Evento não permitido: $GITHUB_EVENT_NAME"
+          PRD_ORIGEM="${INPUT_PRD_FILE:-${PAYLOAD_PRD_FILE:-$DEFAULT_PRD_ORIGEM}}"
+
+          echo "PRD de origem definido: $PRD_ORIGEM"
+          echo "prd_origem=$PRD_ORIGEM" >> "$GITHUB_OUTPUT"
+
+      - name: Validar existência do PRD Standard no Repositório 2
+        run: |
+          if [ ! -f "$PRD_STANDARD_DESTINO" ]; then
+            echo "Erro: o arquivo $PRD_STANDARD_DESTINO não existe no Repositório 2."
             exit 1
           fi
 
-          echo "Evento permitido: $GITHUB_EVENT_NAME"
+          echo "Arquivo PRD Standard encontrado: $PRD_STANDARD_DESTINO"
 
-      # ============================
-      # DOWNLOAD DO REPOSITÓRIO
-      # ============================
-      - name: Baixar arquivos do repositório
-        uses: actions/checkout@v4
+      - name: Buscar PRD do Repositório 1 e sobrescrever PRD Standard
+        env:
+          PRD_ORIGEM: ${{ steps.definir-prd.outputs.prd_origem }}
+        run: |
+          RAW_URL="https://raw.githubusercontent.com/${REPO_ARMAZENAMENTO}/${BRANCH_ARMAZENAMENTO}/${PRD_ORIGEM}"
 
-      - name: Listar arquivos baixados
-        run: 
-        
-      # ============================
-      # DEPOIS DO DOWNLOAD
-      # ============================
-      - name: Pós-download - validar arquivos MD baixados
+          echo "Buscando PRD no Repositório 1..."
+          echo "Arquivo origem: $PRD_ORIGEM"
+          echo "Arquivo destino: $PRD_STANDARD_DESTINO"
+
+          curl -L --fail "$RAW_URL" -o "$PRD_STANDARD_DESTINO"
+
+          if [ ! -s "$PRD_STANDARD_DESTINO" ]; then
+            echo "Erro: o PRD Standard ficou vazio após o download."
+            exit 1
+          fi
+
+          echo "PRD Standard sobrescrito com sucesso."
+          echo "Prévia do conteúdo:"
+          head -n 20 "$PRD_STANDARD_DESTINO"
+
+      - name: Processamento principal do PRD
         run: |
           mkdir -p relatorios
 
-          cp "$RUNNER_TEMP/pre-download.log" relatorios/pre-download.log
+          echo "Iniciando processamento do PRD..."
+          echo "Arquivo processado: $PRD_STANDARD_DESTINO" | tee relatorios/processamento-prd.log
+          echo "Quantidade de linhas: $(wc -l < "$PRD_STANDARD_DESTINO")" | tee -a relatorios/processamento-prd.log
+          echo "Quantidade de caracteres: $(wc -m < "$PRD_STANDARD_DESTINO")" | tee -a relatorios/processamento-prd.log
+          echo "Hash SHA256:" | tee -a relatorios/processamento-prd.log
+          sha256sum "$PRD_STANDARD_DESTINO" | tee -a relatorios/processamento-prd.log
 
-          echo "====== PÓS-DOWNLOAD ======" | tee relatorios/pos-download.log
-          echo "Procurando arquivos .md no repositório..." | tee -a relatorios/pos-download.log
+          echo "" >> relatorios/processamento-prd.log
+          echo "Conteúdo processado:" >> relatorios/processamento-prd.log
+          cat "$PRD_STANDARD_DESTINO" >> relatorios/processamento-prd.log
 
-          find . -maxdepth 2 -type f -name "*.md" | sort > relatorios/arquivos-md.txt
+          echo "Processamento finalizado com sucesso."
 
-          TOTAL_MD=$(wc -l < relatorios/arquivos-md.txt)
-
-          echo "Total de arquivos .md encontrados: $TOTAL_MD" | tee -a relatorios/pos-download.log
-
-          if [ "$TOTAL_MD" -eq 0 ]; then
-            echo "Nenhum arquivo .md foi encontrado."
-            exit 1
-          fi
-
-          echo "Arquivos encontrados:"
-          cat relatorios/arquivos-md.txt
-
-      - name: Pós-download - gerar hash dos arquivos MD
+      - name: Limpar PRD Standard após processamento
+        if: always()
         run: |
-          echo "Gerando hash SHA256 dos arquivos .md..."
+          echo "Limpando o conteúdo do PRD Standard..."
+          : > "$PRD_STANDARD_DESTINO"
+          echo "PRD Standard limpo com sucesso."
 
-          while read arquivo; do
-            sha256sum "$arquivo"
-          done < relatorios/arquivos-md.txt | tee relatorios/hashes-md.txt
-
-      - name: Pós-download - validar arquivos esperados
+      - name: Salvar limpeza no Repositório 2
+        if: always()
         run: |
-          if [ ! -f "receita_cuscuz.md" ]; then
-            echo "Arquivo receita_cuscuz.md não encontrado."
-            exit 1
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          git add "$PRD_STANDARD_DESTINO"
+
+          if git diff --cached --quiet; then
+            echo "Nenhuma alteração para commitar."
+          else
+            git commit -m "chore: limpar PRD Standard após processamento"
+            git push
           fi
 
-          if [ ! -f "titulos_corinthians.md" ]; then
-            echo "Arquivo titulos_corinthians.md não encontrado."
-            exit 1
-          fi
-
-          echo "Arquivos esperados encontrados com sucesso."
-
-      - name: Mostrar receita
-        run: cat receita_cuscuz.md
-
-      - name: Mostrar títulos
-        run: cat titulos_corinthians.md
-
-      - name: Pós-download - salvar relatório da execução
+      - name: Publicar relatório do processamento
+        if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: relatorio-download-md
+          name: relatorio-processamento-prd
           path: relatorios/
