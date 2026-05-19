@@ -1,0 +1,173 @@
+name: Processar PRD do card Jira
+
+on:
+  workflow_dispatch:
+    inputs:
+      card_title:
+        description: "Título do card do Jira com o nome do arquivo .md"
+        required: true
+        type: string
+  repository_dispatch:
+    types:
+      - jira-card-moved
+
+permissions:
+  contents: write
+
+concurrency:
+  group: processamento-prd-standard
+  cancel-in-progress: false
+
+env:
+  REPO_ARMAZENAMENTO: CintiaMiranda2006/Workflow-Armazenamento
+  BRANCH_ARMAZENAMENTO: main
+  PRD_STANDARD_DESTINO: markdown_vazio.md
+
+jobs:
+  processar-prd-do-card:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Baixar Repositório 2 - Processamento
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Baixar Repositório 1 - Armazenamento
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ env.REPO_ARMAZENAMENTO }}
+          ref: ${{ env.BRANCH_ARMAZENAMENTO }}
+          path: repo-armazenamento
+          persist-credentials: false
+
+      - name: Definir arquivo .md a partir do título do card
+        id: definir-prd
+        shell: bash
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            CARD_TITLE="${{ inputs.card_title }}"
+          else
+            CARD_TITLE="${{ github.event.client_payload.card_title }}"
+          fi
+
+          if [ -z "$CARD_TITLE" ]; then
+            echo "Erro: o título do card não foi recebido."
+            echo "Para repository_dispatch, envie client_payload.card_title com o nome do arquivo .md."
+            exit 1
+          fi
+
+          CARD_TITLE=$(echo "$CARD_TITLE" | xargs)
+
+          if [[ "$CARD_TITLE" != *.md ]]; then
+            CARD_TITLE="$CARD_TITLE.md"
+          fi
+
+          if [[ "$CARD_TITLE" == *"/"* || "$CARD_TITLE" == *".."* ]]; then
+            echo "Erro: o título do card deve conter apenas o nome do arquivo, sem caminho."
+            echo "Título recebido: $CARD_TITLE"
+            exit 1
+          fi
+
+          echo "Arquivo solicitado pelo card: $CARD_TITLE"
+          echo "nome_prd=$CARD_TITLE" >> "$GITHUB_OUTPUT"
+
+      - name: Validar PRD Standard no Repositório 2
+        run: |
+          if [ ! -f "$PRD_STANDARD_DESTINO" ]; then
+            echo "Erro: o arquivo $PRD_STANDARD_DESTINO não existe no Repositório 2."
+            exit 1
+          fi
+
+          echo "PRD Standard encontrado: $PRD_STANDARD_DESTINO"
+
+      - name: Buscar e processar apenas o PRD do card
+        shell: bash
+        run: |
+          mkdir -p relatorios
+
+          NOME_PRD="${{ steps.definir-prd.outputs.nome_prd }}"
+
+          echo "Buscando apenas o arquivo informado no título do card: $NOME_PRD"
+
+          mapfile -t PRDS < <(find repo-armazenamento -type f -name "$NOME_PRD" ! -iname "README.md" | sort)
+
+          if [ ${#PRDS[@]} -eq 0 ]; then
+            echo "Erro: arquivo $NOME_PRD não encontrado no Repositório 1."
+            echo "Arquivos .md disponíveis:"
+            find repo-armazenamento -type f -name "*.md" ! -iname "README.md" -printf "%f\n" | sort
+            exit 1
+          fi
+
+          if [ ${#PRDS[@]} -gt 1 ]; then
+            echo "Erro: mais de um arquivo com o nome $NOME_PRD foi encontrado."
+            printf '%s\n' "${PRDS[@]}"
+            exit 1
+          fi
+
+          PRD="${PRDS[0]}"
+          NOME_RELATORIO="${NOME_PRD%.md}"
+
+          echo "=========================================="
+          echo "Processando PRD: $NOME_PRD"
+          echo "Arquivo origem: $PRD"
+          echo "Arquivo destino: $PRD_STANDARD_DESTINO"
+          echo "=========================================="
+
+          cp "$PRD" "$PRD_STANDARD_DESTINO"
+
+          if [ ! -s "$PRD_STANDARD_DESTINO" ]; then
+            echo "Erro: o PRD Standard ficou vazio após copiar $NOME_PRD."
+            exit 1
+          fi
+
+          echo "PRD copiado para o PRD Standard com sucesso."
+          echo "Prévia do conteúdo:"
+          head -n 10 "$PRD_STANDARD_DESTINO"
+
+          echo ""
+          echo "Executando processamento principal..."
+
+          {
+            echo "PRD processado: $NOME_PRD"
+            echo "Arquivo origem: $PRD"
+            echo "Arquivo destino temporário: $PRD_STANDARD_DESTINO"
+            echo "Quantidade de linhas: $(wc -l < "$PRD_STANDARD_DESTINO")"
+            echo "Quantidade de caracteres: $(wc -m < "$PRD_STANDARD_DESTINO")"
+            echo "Hash SHA256:"
+            sha256sum "$PRD_STANDARD_DESTINO"
+            echo ""
+            echo "Conteúdo processado:"
+            cat "$PRD_STANDARD_DESTINO"
+          } > "relatorios/${NOME_RELATORIO}-processamento.log"
+
+          echo "Processamento finalizado para: $NOME_PRD"
+
+      - name: Limpar PRD Standard após processamento
+        if: always()
+        run: |
+          echo "Limpando o conteúdo do PRD Standard..."
+          : > "$PRD_STANDARD_DESTINO"
+          echo "PRD Standard limpo com sucesso."
+
+      - name: Salvar limpeza no Repositório 2
+        if: always()
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          git add "$PRD_STANDARD_DESTINO"
+
+          if git diff --cached --quiet; then
+            echo "Nenhuma alteração para commitar."
+          else
+            git commit -m "chore: limpar PRD Standard após processamento"
+            git push
+          fi
+
+      - name: Publicar relatório do PRD processado
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: relatorio-processamento-prd
+          path: relatorios/
