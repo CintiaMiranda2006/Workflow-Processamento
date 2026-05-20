@@ -1,22 +1,15 @@
-name: Processar PRD do card Jira
+name: Processar PRD
 
 on:
-  workflow_dispatch:
+  workflow_call:
     inputs:
-      card_title:
-        description: "Título do card do Jira com o nome do arquivo .md"
+      nome_prd:
+        description: "Nome do arquivo .md que será buscado no repositório de armazenamento"
         required: true
         type: string
-  repository_dispatch:
-    types:
-      - jira-card-moved
 
 permissions:
   contents: write
-
-concurrency:
-  group: processamento-prd-standard
-  cancel-in-progress: false
 
 env:
   REPO_ARMAZENAMENTO: CintiaMiranda2006/Workflow-Armazenamento
@@ -25,7 +18,7 @@ env:
   PASTA_PRD_GERADO: prds-gerados
 
 jobs:
-  processar-prd-do-card:
+  processar-prd:
     runs-on: ubuntu-latest
 
     steps:
@@ -42,42 +35,19 @@ jobs:
           path: repo-armazenamento
           persist-credentials: false
 
-      - name: Definir arquivo .md a partir do título do card
+      - name: Definir nomes do PRD
         id: definir-prd
         shell: bash
         run: |
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            CARD_TITLE="${{ inputs.card_title }}"
-          else
-            CARD_TITLE="${{ github.event.client_payload.card_title }}"
-          fi
-
-          if [ -z "$CARD_TITLE" ]; then
-            echo "Erro: o título do card não foi recebido."
-            echo "Para repository_dispatch, envie client_payload.card_title com o nome do arquivo .md."
-            exit 1
-          fi
-
-          CARD_TITLE=$(echo "$CARD_TITLE" | xargs)
-
-          if [[ "$CARD_TITLE" != *.md ]]; then
-            CARD_TITLE="$CARD_TITLE.md"
-          fi
-
-          if [[ "$CARD_TITLE" == *"/"* || "$CARD_TITLE" == *".."* ]]; then
-            echo "Erro: o título do card deve conter apenas o nome do arquivo, sem caminho."
-            echo "Título recebido: $CARD_TITLE"
-            exit 1
-          fi
-
-          NOME_BASE="${CARD_TITLE%.md}"
+          NOME_PRD="${{ inputs.nome_prd }}"
+          NOME_BASE="${NOME_PRD%.md}"
           ARQUIVO_GERADO="${NOME_BASE}-prd-gerado.md"
           CAMINHO_ARQUIVO_GERADO="${{ env.PASTA_PRD_GERADO }}/${ARQUIVO_GERADO}"
 
-          echo "Arquivo solicitado pelo card: $CARD_TITLE"
+          echo "Arquivo solicitado: $NOME_PRD"
           echo "Arquivo gerado no Repositório 2: $CAMINHO_ARQUIVO_GERADO"
 
-          echo "nome_prd=$CARD_TITLE" >> "$GITHUB_OUTPUT"
+          echo "nome_prd=$NOME_PRD" >> "$GITHUB_OUTPUT"
           echo "nome_base=$NOME_BASE" >> "$GITHUB_OUTPUT"
           echo "caminho_arquivo_gerado=$CAMINHO_ARQUIVO_GERADO" >> "$GITHUB_OUTPUT"
 

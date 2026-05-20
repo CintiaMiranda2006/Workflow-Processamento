@@ -1,0 +1,63 @@
+name: Receber card Jira
+
+on:
+  workflow_dispatch:
+    inputs:
+      card_title:
+        description: "Título do card do Jira com o nome do arquivo .md"
+        required: true
+        type: string
+  repository_dispatch:
+    types:
+      - jira-card-moved
+
+permissions:
+  contents: write
+
+concurrency:
+  group: processamento-prd-standard
+  cancel-in-progress: false
+
+jobs:
+  validar-card:
+    runs-on: ubuntu-latest
+    outputs:
+      nome_prd: ${{ steps.validar.outputs.nome_prd }}
+
+    steps:
+      - name: Validar título do card
+        id: validar
+        shell: bash
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            CARD_TITLE="${{ inputs.card_title }}"
+          else
+            CARD_TITLE="${{ github.event.client_payload.card_title }}"
+          fi
+
+          if [ -z "$CARD_TITLE" ]; then
+            echo "Erro: o título do card não foi recebido."
+            echo "Para repository_dispatch, envie client_payload.card_title com o nome do arquivo .md."
+            exit 1
+          fi
+
+          CARD_TITLE=$(echo "$CARD_TITLE" | xargs)
+
+          if [[ "$CARD_TITLE" != *.md ]]; then
+            CARD_TITLE="$CARD_TITLE.md"
+          fi
+
+          if [[ "$CARD_TITLE" == *"/"* || "$CARD_TITLE" == *".."* ]]; then
+            echo "Erro: o título do card deve conter apenas o nome do arquivo, sem caminho."
+            echo "Título recebido: $CARD_TITLE"
+            exit 1
+          fi
+
+          echo "Arquivo solicitado pelo card: $CARD_TITLE"
+          echo "nome_prd=$CARD_TITLE" >> "$GITHUB_OUTPUT"
+
+  chamar-processamento:
+    needs: validar-card
+    uses: ./.github/workflows/processar-prd.yml
+    with:
+      nome_prd: ${{ needs.validar-card.outputs.nome_prd }}
