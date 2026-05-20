@@ -22,6 +22,7 @@ env:
   REPO_ARMAZENAMENTO: CintiaMiranda2006/Workflow-Armazenamento
   BRANCH_ARMAZENAMENTO: main
   PRD_STANDARD_DESTINO: markdown_vazio.md
+  PASTA_PRD_GERADO: prds-gerados
 
 jobs:
   processar-prd-do-card:
@@ -69,8 +70,16 @@ jobs:
             exit 1
           fi
 
+          NOME_BASE="${CARD_TITLE%.md}"
+          ARQUIVO_GERADO="${NOME_BASE}-prd-gerado.md"
+          CAMINHO_ARQUIVO_GERADO="${{ env.PASTA_PRD_GERADO }}/${ARQUIVO_GERADO}"
+
           echo "Arquivo solicitado pelo card: $CARD_TITLE"
+          echo "Arquivo gerado no Repositório 2: $CAMINHO_ARQUIVO_GERADO"
+
           echo "nome_prd=$CARD_TITLE" >> "$GITHUB_OUTPUT"
+          echo "nome_base=$NOME_BASE" >> "$GITHUB_OUTPUT"
+          echo "caminho_arquivo_gerado=$CAMINHO_ARQUIVO_GERADO" >> "$GITHUB_OUTPUT"
 
       - name: Validar PRD Standard no Repositório 2
         run: |
@@ -81,11 +90,10 @@ jobs:
 
           echo "PRD Standard encontrado: $PRD_STANDARD_DESTINO"
 
-      - name: Buscar e processar apenas o PRD do card
+      - name: Buscar PRD do card
+        id: buscar-prd
         shell: bash
         run: |
-          mkdir -p relatorios
-
           NOME_PRD="${{ steps.definir-prd.outputs.nome_prd }}"
 
           echo "Buscando apenas o arquivo informado no título do card: $NOME_PRD"
@@ -106,12 +114,20 @@ jobs:
           fi
 
           PRD="${PRDS[0]}"
-          NOME_RELATORIO="${NOME_PRD%.md}"
+
+          echo "PRD encontrado: $PRD"
+          echo "caminho_prd_origem=$PRD" >> "$GITHUB_OUTPUT"
+
+      - name: Copiar PRD para arquivo standard temporário
+        shell: bash
+        run: |
+          PRD="${{ steps.buscar-prd.outputs.caminho_prd_origem }}"
+          NOME_PRD="${{ steps.definir-prd.outputs.nome_prd }}"
 
           echo "=========================================="
-          echo "Processando PRD: $NOME_PRD"
+          echo "Copiando PRD: $NOME_PRD"
           echo "Arquivo origem: $PRD"
-          echo "Arquivo destino: $PRD_STANDARD_DESTINO"
+          echo "Arquivo temporário: $PRD_STANDARD_DESTINO"
           echo "=========================================="
 
           cp "$PRD" "$PRD_STANDARD_DESTINO"
@@ -121,47 +137,70 @@ jobs:
             exit 1
           fi
 
-          echo "PRD copiado para o PRD Standard com sucesso."
+          echo "PRD copiado para o arquivo temporário com sucesso."
           echo "Prévia do conteúdo:"
           head -n 10 "$PRD_STANDARD_DESTINO"
 
-          echo ""
-          echo "Executando processamento principal..."
+      - name: Gerar novo arquivo com conteúdo do PRD puxado
+        shell: bash
+        run: |
+          CAMINHO_ARQUIVO_GERADO="${{ steps.definir-prd.outputs.caminho_arquivo_gerado }}"
+
+          mkdir -p "$(dirname "$CAMINHO_ARQUIVO_GERADO")"
+          cp "$PRD_STANDARD_DESTINO" "$CAMINHO_ARQUIVO_GERADO"
+
+          if [ ! -s "$CAMINHO_ARQUIVO_GERADO" ]; then
+            echo "Erro: o arquivo gerado ficou vazio."
+            exit 1
+          fi
+
+          echo "Arquivo gerado com o conteúdo do PRD: $CAMINHO_ARQUIVO_GERADO"
+
+      - name: Gerar relatório do processamento
+        shell: bash
+        run: |
+          mkdir -p relatorios
+
+          NOME_PRD="${{ steps.definir-prd.outputs.nome_prd }}"
+          NOME_BASE="${{ steps.definir-prd.outputs.nome_base }}"
+          PRD="${{ steps.buscar-prd.outputs.caminho_prd_origem }}"
+          CAMINHO_ARQUIVO_GERADO="${{ steps.definir-prd.outputs.caminho_arquivo_gerado }}"
 
           {
             echo "PRD processado: $NOME_PRD"
             echo "Arquivo origem: $PRD"
-            echo "Arquivo destino temporário: $PRD_STANDARD_DESTINO"
-            echo "Quantidade de linhas: $(wc -l < "$PRD_STANDARD_DESTINO")"
-            echo "Quantidade de caracteres: $(wc -m < "$PRD_STANDARD_DESTINO")"
+            echo "Arquivo gerado: $CAMINHO_ARQUIVO_GERADO"
+            echo "Quantidade de linhas: $(wc -l < "$CAMINHO_ARQUIVO_GERADO")"
+            echo "Quantidade de caracteres: $(wc -m < "$CAMINHO_ARQUIVO_GERADO")"
             echo "Hash SHA256:"
-            sha256sum "$PRD_STANDARD_DESTINO"
+            sha256sum "$CAMINHO_ARQUIVO_GERADO"
             echo ""
             echo "Conteúdo processado:"
-            cat "$PRD_STANDARD_DESTINO"
-          } > "relatorios/${NOME_RELATORIO}-processamento.log"
+            cat "$CAMINHO_ARQUIVO_GERADO"
+          } > "relatorios/${NOME_BASE}-processamento.log"
 
           echo "Processamento finalizado para: $NOME_PRD"
 
-      - name: Limpar PRD Standard após processamento
+      - name: Limpar PRD Standard temporário
         if: always()
         run: |
-          echo "Limpando o conteúdo do PRD Standard..."
+          echo "Limpando o conteúdo do PRD Standard temporário..."
           : > "$PRD_STANDARD_DESTINO"
-          echo "PRD Standard limpo com sucesso."
+          echo "PRD Standard temporário limpo com sucesso."
 
-      - name: Salvar limpeza no Repositório 2
-        if: always()
+      - name: Commitar apenas o arquivo gerado com o PRD
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
 
-          git add "$PRD_STANDARD_DESTINO"
+          CAMINHO_ARQUIVO_GERADO="${{ steps.definir-prd.outputs.caminho_arquivo_gerado }}"
 
-          if git diff --cached --quiet; then
-            echo "Nenhuma alteração para commitar."
+          git add "$CAMINHO_ARQUIVO_GERADO"
+
+          if git diff --cached --quiet -- "$CAMINHO_ARQUIVO_GERADO"; then
+            echo "Nenhuma alteração no arquivo gerado para commitar."
           else
-            git commit -m "chore: limpar PRD Standard após processamento"
+            git commit -m "feat: gerar arquivo do PRD ${{ steps.definir-prd.outputs.nome_prd }}"
             git push
           fi
 
