@@ -1,4 +1,4 @@
-name: Processar PRD
+name: GitAction_Main
 
 on:
   workflow_call:
@@ -18,10 +18,16 @@ env:
   BRANCH_BASE_PR: main
   PRD_STANDARD_DESTINO: markdown_vazio.md
   PASTA_PRD_GERADO: prds-gerados
+  ARTIFACT_MAIN_OUTPUT: prd-main-output
 
 jobs:
   processar-prd:
     runs-on: ubuntu-latest
+    outputs:
+      nome_prd: ${{ steps.definir-prd.outputs.nome_prd }}
+      nome_base: ${{ steps.definir-prd.outputs.nome_base }}
+      branch_slug: ${{ steps.definir-prd.outputs.branch_slug }}
+      caminho_arquivo_gerado: ${{ steps.definir-prd.outputs.caminho_arquivo_gerado }}
 
     steps:
       - name: Baixar Repositório 2 - Processamento
@@ -163,52 +169,26 @@ jobs:
 
           echo "Processamento finalizado para: $NOME_PRD"
 
-      - name: Limpar PRD Standard temporário
-        if: always()
-        run: |
-          echo "Limpando o conteúdo do PRD Standard temporário..."
-          : > "$PRD_STANDARD_DESTINO"
-          echo "PRD Standard temporário limpo com sucesso."
-
-      - name: Criar Pull Request com o arquivo gerado
+      - name: Disponibilizar saída para o pós-processamento
         if: success()
-        env:
-          GH_TOKEN: ${{ github.token }}
-          NOME_PRD: ${{ steps.definir-prd.outputs.nome_prd }}
-          NOME_BASE: ${{ steps.definir-prd.outputs.nome_base }}
-          BRANCH_SLUG: ${{ steps.definir-prd.outputs.branch_slug }}
-          CAMINHO_ARQUIVO_GERADO: ${{ steps.definir-prd.outputs.caminho_arquivo_gerado }}
-        shell: bash
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-
-          BRANCH_PR="automacao/prd-${BRANCH_SLUG}-${GITHUB_RUN_ID}"
-
-          echo "Criando branch para o Pull Request: $BRANCH_PR"
-          git checkout -b "$BRANCH_PR"
-
-          git add "$CAMINHO_ARQUIVO_GERADO"
-
-          if git diff --cached --quiet -- "$CAMINHO_ARQUIVO_GERADO"; then
-            echo "Nenhuma alteração no arquivo gerado. Pull Request não será criado."
-            exit 0
-          fi
-
-          git commit -m "feat: gerar arquivo do PRD $NOME_PRD"
-          git push --set-upstream origin "$BRANCH_PR"
-
-          PR_URL=$(gh pr create \
-            --base "$BRANCH_BASE_PR" \
-            --head "$BRANCH_PR" \
-            --title "feat: gerar PRD $NOME_PRD" \
-            --body "Este Pull Request foi aberto automaticamente pelo GitHub Actions.\n\nArquivo processado: \`$NOME_PRD\`\nArquivo gerado: \`$CAMINHO_ARQUIVO_GERADO\`\n\nO conteúdo foi gerado em uma branch separada para revisão do dono do repositório antes do merge na branch principal.")
-
-          echo "Pull Request criado: $PR_URL"
-
-      - name: Publicar relatório do PRD processado
-        if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: relatorio-processamento-prd
-          path: relatorios/
+          name: ${{ env.ARTIFACT_MAIN_OUTPUT }}
+          path: |
+            ${{ steps.definir-prd.outputs.caminho_arquivo_gerado }}
+            relatorios/
+
+  chamar-pos:
+    needs: processar-prd
+    uses: ./.github/workflows/GitAction_Pos.yml
+    with:
+      nome_prd: ${{ needs.processar-prd.outputs.nome_prd }}
+      nome_base: ${{ needs.processar-prd.outputs.nome_base }}
+      branch_slug: ${{ needs.processar-prd.outputs.branch_slug }}
+      caminho_arquivo_gerado: ${{ needs.processar-prd.outputs.caminho_arquivo_gerado }}
+      branch_base_pr: main
+      prd_standard_destino: markdown_vazio.md
+      artifact_main_output: prd-main-output
+    permissions:
+      contents: write
+      pull-requests: write

@@ -1,4 +1,4 @@
-name: Receber card Jira
+name: GitAction_Pre
 
 on:
   workflow_dispatch:
@@ -57,8 +57,11 @@ jobs:
           echo "Arquivo solicitado pelo card: $CARD_TITLE"
           echo "nome_prd=$CARD_TITLE" >> "$GITHUB_OUTPUT"
 
-  chamar-processamento:
+  chamar-main:
     needs: validar-card
-    uses: ./.github/workflows/processar-prd.yml
+    uses: ./.github/workflows/GitAction_Main.yml
     with:
       nome_prd: ${{ needs.validar-card.outputs.nome_prd }}
+    permissions:
+      contents: write
+      pull-requests: write

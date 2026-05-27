@@ -1,0 +1,121 @@
+name: GitAction_Pos
+
+on:
+  workflow_call:
+    inputs:
+      nome_prd:
+        description: "Nome do arquivo .md processado"
+        required: true
+        type: string
+      nome_base:
+        description: "Nome base do PRD, sem a extensão .md"
+        required: true
+        type: string
+      branch_slug:
+        description: "Slug usado na branch do Pull Request"
+        required: true
+        type: string
+      caminho_arquivo_gerado:
+        description: "Caminho do arquivo gerado no repositório de processamento"
+        required: true
+        type: string
+      branch_base_pr:
+        description: "Branch base do Pull Request"
+        required: true
+        type: string
+      prd_standard_destino:
+        description: "Arquivo PRD standard temporário"
+        required: true
+        type: string
+      artifact_main_output:
+        description: "Nome do artifact gerado pelo workflow principal"
+        required: true
+        type: string
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  pos-processamento:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Baixar Repositório 2 - Processamento
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Baixar saída gerada pelo processamento principal
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ inputs.artifact_main_output }}
+          path: .
+
+      - name: Validar arquivo gerado recebido
+        shell: bash
+        run: |
+          CAMINHO_ARQUIVO_GERADO="${{ inputs.caminho_arquivo_gerado }}"
+
+          if [ ! -s "$CAMINHO_ARQUIVO_GERADO" ]; then
+            echo "Erro: o arquivo gerado não foi encontrado ou está vazio após baixar o artifact."
+            echo "Arquivo esperado: $CAMINHO_ARQUIVO_GERADO"
+            exit 1
+          fi
+
+          echo "Arquivo gerado recebido com sucesso: $CAMINHO_ARQUIVO_GERADO"
+
+      - name: Limpar PRD Standard temporário
+        if: always()
+        shell: bash
+        run: |
+          PRD_STANDARD_DESTINO="${{ inputs.prd_standard_destino }}"
+
+          echo "Limpando o conteúdo do PRD Standard temporário..."
+          : > "$PRD_STANDARD_DESTINO"
+          echo "PRD Standard temporário limpo com sucesso."
+
+      - name: Criar Pull Request com o arquivo gerado
+        if: success()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          NOME_PRD: ${{ inputs.nome_prd }}
+          NOME_BASE: ${{ inputs.nome_base }}
+          BRANCH_SLUG: ${{ inputs.branch_slug }}
+          CAMINHO_ARQUIVO_GERADO: ${{ inputs.caminho_arquivo_gerado }}
+          BRANCH_BASE_PR: ${{ inputs.branch_base_pr }}
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          BRANCH_PR="automacao/prd-${BRANCH_SLUG}-${GITHUB_RUN_ID}"
+
+          echo "Criando branch para o Pull Request: $BRANCH_PR"
+          git checkout -b "$BRANCH_PR"
+
+          git add "$CAMINHO_ARQUIVO_GERADO"
+
+          if git diff --cached --quiet -- "$CAMINHO_ARQUIVO_GERADO"; then
+            echo "Nenhuma alteração no arquivo gerado. Pull Request não será criado."
+            exit 0
+          fi
+
+          git commit -m "feat: gerar arquivo do PRD $NOME_PRD"
+          git push --set-upstream origin "$BRANCH_PR"
+
+          PR_URL=$(gh pr create \
+            --base "$BRANCH_BASE_PR" \
+            --head "$BRANCH_PR" \
+            --title "feat: gerar PRD $NOME_PRD" \
+            --body "Este Pull Request foi aberto automaticamente pelo GitHub Actions.\n\nArquivo processado: \`$NOME_PRD\`\nArquivo gerado: \`$CAMINHO_ARQUIVO_GERADO\`\n\nO conteúdo foi gerado em uma branch separada para revisão do dono do repositório antes do merge na branch principal.")
+
+          echo "Pull Request criado: $PR_URL"
+
+      - name: Publicar relatório do PRD processado
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: relatorio-processamento-prd
+          path: relatorios/
+          if-no-files-found: ignore
