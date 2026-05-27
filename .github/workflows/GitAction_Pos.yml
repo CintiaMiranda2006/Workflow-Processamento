@@ -1,3 +1,8 @@
+# Este workflow é acionado pelo workflow principal de processamento do PRD, após a geração do arquivo final. Ele tem as seguintes responsabilidades:
+# 1. Baixar o arquivo gerado pelo workflow principal usando artifacts.
+# 2. Validar que o arquivo foi recebido corretamente.
+# 3. Criar uma branch e um Pull Request no repositório de processamento com o arquivo gerado, usando o nome do PRD para nomear a branch e o título do PR.
+# 4. Publicar um relatório do processamento como artifact, para que o workflow principal possa disponibilizá-lo para o usuário.
 name: GitAction_Pos
 
 on:

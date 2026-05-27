@@ -1,3 +1,10 @@
+# Workflow principal para processar o PRD, gerar o arquivo final e acionar o workflow de pós-processamento. Ele tem as seguintes responsabilidades:
+# 1. Validar o título do card do Jira para extrair o nome do arquivo .md a ser processado.
+# 2. Buscar o arquivo .md correspondente no repositório de armazenamento.
+# 3. Copiar o conteúdo do arquivo encontrado para um arquivo PRD standard temporário no repositório de processamento.
+# 4. Gerar um novo arquivo com o conteúdo do PRD processado.
+# 5. Gerar um relatório do processamento.
+# 6. Disponibilizar o arquivo gerado e o relatório como artifacts para o workflow de pós-processamento.
 name: GitAction_Main
 
 on:

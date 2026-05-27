@@ -1,3 +1,7 @@
+# Este workflow é o ponto de entrada para o processamento do PRD. Ele pode ser acionado manualmente via workflow_dispatch, onde o usuário deve fornecer o título do card do Jira (que deve conter o nome do arquivo .md a ser processado). Ele também pode ser acionado automaticamente via repository_dispatch, quando um card é movido para a coluna de processamento no Jira, desde que o evento enviado contenha o título do card no client_payload. O workflow tem as seguintes responsabilidades:
+# 1. Validar o título do card para extrair o nome do arquivo .md a ser processado.
+# 2. Acionar o workflow principal de processamento do PRD, passando o nome do arquivo extraído como input.
+
 name: GitAction_Pre
 
 on:
